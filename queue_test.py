@@ -21,12 +21,18 @@ nano_socket = "ipc:///tmp/nano_test"
 
 def queue_worker(q):
     size_messages = 0
+    is_joinable = q.__class__ == multiprocessing.JoinableQueue().__class__
+
     for task_nbr in range(num_messages):
         message = q.get()
+        if is_joinable:
+            q.task_done()
+
         size_messages += len(message)
 
     print("Total size:", size_messages)
     sys.exit(1)
+
 
 def pipe_worker(q):
     size_messages = 0
@@ -51,6 +57,7 @@ def zmq_worker():
 
     print("Total size:", size_messages)
     sys.exit(1)
+
 
 def nano_worker():
     try:
@@ -136,6 +143,28 @@ def queue_test():
     print("Duration: %s" % duration)
     print("Messages Per Second: %s" % msg_per_sec)
 
+
+def joinable_queue_test():
+    print("Joinable Queue")
+    send_q = multiprocessing.JoinableQueue()
+    proc = multiprocessing.Process(target=queue_worker, args=(send_q,))
+    proc.start()
+
+    start_time = time.time()
+    for num in range(num_messages):
+        send_q.put(doc)
+
+    proc.join()
+    send_q.join()
+
+    end_time = time.time()
+    duration = end_time - start_time
+    msg_per_sec = num_messages / duration
+
+    print("Duration: %s" % duration)
+    print("Messages Per Second: %s" % msg_per_sec)
+
+
 def pipe_test():
     print("MP Pipe")
     receive_conn, send_conn = multiprocessing.Pipe(False)
@@ -157,6 +186,7 @@ def pipe_test():
 
 def main():
     queue_test()
+    joinable_queue_test()
     pipe_test()
     zmq_test()
     nano_test()
