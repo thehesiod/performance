@@ -6,7 +6,6 @@ import pickle
 import zmq
 import traceback
 import posix_ipc
-import platform
 
 try:
     import nanomsg
@@ -24,15 +23,11 @@ doc = {
 num_messages = 500000
 zmq_socket = "ipc:///tmp/zmq_test"
 nano_socket = "ipc:///tmp/nano_test"
-
-if platform.system() == "Darwin":
-    ipc_file = "/tmp/ipc_test"
-else:
-    ipc_file = "/ipc_test"  # needs to be a "root" path or else it will give permission denied
+ipc_name = 'ipc_test'
 
 
 def ipc_worker():
-    mq = posix_ipc.MessageQueue(ipc_file)
+    mq = posix_ipc.MessageQueue(ipc_name)
     try:
         size_messages = 0
         for task_nbr in range(num_messages):
@@ -106,10 +101,7 @@ def nano_worker():
 
 def ipc_test():
     print("IPC")
-    if os.path.exists(ipc_file):
-        os.unlink(ipc_file)
-
-    mq = posix_ipc.MessageQueue(ipc_file, flags=os.O_CREAT|os.O_EXCL)
+    mq = posix_ipc.MessageQueue(ipc_name, flags=os.O_CREAT | os.O_EXCL)
     try:
         proc = multiprocessing.Process(target=ipc_worker, args=())
         proc.start()
