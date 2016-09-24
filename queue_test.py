@@ -1,11 +1,18 @@
 import sys
+import os
 import time
 import multiprocessing
 import pickle
 import zmq
-import nanomsg
 import traceback
+import posix_ipc
+import platform
 
+try:
+    import nanomsg
+    ENABLE_NANO = True
+except:
+    ENABLE_NANO = False
 
 doc = {
     'something': 'More',
@@ -17,6 +24,26 @@ doc = {
 num_messages = 500000
 zmq_socket = "ipc:///tmp/zmq_test"
 nano_socket = "ipc:///tmp/nano_test"
+
+if platform.system() == "Darwin":
+    ipc_file = "/tmp/ipc_test"
+else:
+    ipc_file = "/ipc_test"  # needs to be a "root" path or else it will give permission denied
+
+
+def ipc_worker():
+    mq = posix_ipc.MessageQueue(ipc_file)
+    try:
+        size_messages = 0
+        for task_nbr in range(num_messages):
+            message, priority = mq.receive()
+            message = pickle.loads(message)
+            size_messages += len(message)
+    finally:
+        mq.close()
+
+    print("Total size:", size_messages)
+    sys.exit(1)
 
 
 def queue_worker(q):
@@ -75,6 +102,35 @@ def nano_worker():
         traceback.print_exc()
 
     sys.exit(1)
+
+
+def ipc_test():
+    print("IPC")
+    if os.path.exists(ipc_file):
+        os.unlink(ipc_file)
+
+    mq = posix_ipc.MessageQueue(ipc_file, flags=os.O_CREAT|os.O_EXCL)
+    try:
+        proc = multiprocessing.Process(target=ipc_worker, args=())
+        proc.start()
+        time.sleep(2)
+
+        start_time = time.time()
+        for num in range(num_messages):
+            message = pickle.dumps(doc)
+            mq.send(message)
+
+        proc.join()
+    finally:
+        mq.close()
+        mq.unlink()
+
+    end_time = time.time()
+    duration = end_time - start_time
+    msg_per_sec = num_messages / duration
+
+    print("Duration: %s" % duration)
+    print("Messages Per Second: %s" % msg_per_sec)
 
 
 def zmq_test():
@@ -185,11 +241,14 @@ def pipe_test():
 
 
 def main():
+    ipc_test()
     queue_test()
     joinable_queue_test()
     pipe_test()
     zmq_test()
-    nano_test()
+
+    if ENABLE_NANO:
+        nano_test()
 
 if __name__ == "__main__":
     main()
