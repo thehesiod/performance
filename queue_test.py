@@ -12,15 +12,16 @@ import threading
 
 from multiprocessing.heap import BufferWrapper
 
-# Monkeypatch for: https://bugs.python.org/issue28053
-from multiprocessing.connection import _ConnectionBase
-from multiprocessing.reduction import ForkingPickler
-def _conn_base_send(self, obj):
-    self._check_closed()
-    self._check_writable()
-    self._send_bytes(ForkingPickler.dumps(obj, pickle.HIGHEST_PROTOCOL))
+PICKLE_VERSION = pickle.DEFAULT_PROTOCOL
 
-_ConnectionBase.send = _conn_base_send
+# Monkeypatch for: https://bugs.python.org/issue28053
+from multiprocessing.reduction import ForkingPickler
+def _pklr_init(self, *args):
+    assert len(args) == 2
+    super(self.__class__, self).__init__(args[0], PICKLE_VERSION)
+    self.dispatch_table = self._copyreg_dispatch_table.copy()
+    self.dispatch_table.update(self._extra_reducers)
+ForkingPickler.__init__ = _pklr_init
 
 try:
     import nanomsg
@@ -35,7 +36,7 @@ doc = {
     'ok': ['asdf', 'asdf', 'asdf']
 }
 
-num_messages = 250000
+num_messages = 400000
 zmq_socket_in = "ipc:///tmp/zmq_test_in"
 zmq_socket_out = "ipc:///tmp/zmq_test_out"
 nano_socket_out = "ipc:///tmp/nano_test_out"
@@ -70,7 +71,7 @@ def posix_ipc_worker(rdy_evt: multiprocessing.Event):
             message = pickle.loads(message)
 
             # pickle back to send pyobj
-            message = pickle.dumps(message, pickle.HIGHEST_PROTOCOL)
+            message = pickle.dumps(message, PICKLE_VERSION)
             mq_out.send(message)
             size_messages += len(message)
     finally:
@@ -93,7 +94,7 @@ def sysv_ipc_worker(rdy_evt: multiprocessing.Event):
             message = pickle.loads(message)
 
             # pickle back to send pyobj
-            message = pickle.dumps(message, pickle.HIGHEST_PROTOCOL)
+            message = pickle.dumps(message, PICKLE_VERSION)
             mq_out.send(message)
             size_messages += len(message)
     finally:
@@ -148,7 +149,7 @@ def zmq_worker(rdy_evt: multiprocessing.Event):
     size_messages = 0
     for task_nbr in range(num_messages):
         message = work_receiver.recv_pyobj()
-        work_sender.send_pyobj(message, protocol=pickle.HIGHEST_PROTOCOL)
+        work_sender.send_pyobj(message, protocol=PICKLE_VERSION)
         size_messages += len(message)
 
     print("Total size:", size_messages)
@@ -170,7 +171,7 @@ def nano_worker(rdy_evt: multiprocessing.Event):
         message = pickle.loads(message)
 
         # we pickle back to simulate sending a python object
-        message = pickle.dumps(message, pickle.HIGHEST_PROTOCOL)
+        message = pickle.dumps(message, PICKLE_VERSION)
         socket_out.send(message)
 
         size_messages += len(message)
@@ -211,7 +212,7 @@ def posix_ipc_test():
     try:
         def sender():
             for num in range(num_messages):
-                message = pickle.dumps(doc, pickle.HIGHEST_PROTOCOL)
+                message = pickle.dumps(doc, PICKLE_VERSION)
                 mq_out.send(message)
 
         def receiver():
@@ -237,7 +238,7 @@ def sysv_ipc_test():
         @print_exc
         def sender():
             for num in range(num_messages):
-                message = pickle.dumps(doc, pickle.HIGHEST_PROTOCOL)
+                message = pickle.dumps(doc, PICKLE_VERSION)
                 mq_out.send(message)
 
         @print_exc
@@ -283,7 +284,7 @@ def zmq_test():
     @print_exc
     def sender():
         for num in range(num_messages):
-            socket_out.send_pyobj(doc, protocol=pickle.HIGHEST_PROTOCOL)
+            socket_out.send_pyobj(doc, protocol=PICKLE_VERSION)
 
     @print_exc
     def receiver():
@@ -307,7 +308,7 @@ def nano_test():
         socket_out.bind(nano_socket_out)
 
         for num in range(num_messages):
-            message = pickle.dumps(doc, pickle.HIGHEST_PROTOCOL)
+            message = pickle.dumps(doc, PICKLE_VERSION)
             socket_out.send(message)
 
     @print_exc
