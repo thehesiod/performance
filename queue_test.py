@@ -9,6 +9,7 @@ import traceback
 import posix_ipc
 import sysv_ipc
 import threading
+import nanomsg
 
 from multiprocessing.heap import BufferWrapper
 
@@ -23,11 +24,6 @@ def _pklr_init(self, *args):
     self.dispatch_table.update(self._extra_reducers)
 ForkingPickler.__init__ = _pklr_init
 
-try:
-    import nanomsg
-    ENABLE_NANO = True
-except:
-    ENABLE_NANO = False
 
 doc = {
     'something': 'More' * 50,
@@ -146,11 +142,14 @@ def zmq_worker(rdy_evt: multiprocessing.Event):
 
     rdy_evt.set()
 
-    size_messages = 0
-    for task_nbr in range(num_messages):
-        message = work_receiver.recv_pyobj()
-        work_sender.send_pyobj(message, protocol=PICKLE_VERSION)
-        size_messages += len(message)
+    try:
+        size_messages = 0
+        for task_nbr in range(num_messages):
+            message = work_receiver.recv_pyobj()
+            work_sender.send_pyobj(message, protocol=PICKLE_VERSION)
+            size_messages += len(message)
+    finally:
+        context.destroy()
 
     print("Total size:", size_messages)
 
@@ -165,18 +164,22 @@ def nano_worker(rdy_evt: multiprocessing.Event):
 
     rdy_evt.set()
 
-    size_messages = 0
-    for task_nbr in range(num_messages):
-        message = socket_in.recv()
-        message = pickle.loads(message)
+    try:
+        size_messages = 0
+        for task_nbr in range(num_messages):
+            message = socket_in.recv()
+            message = pickle.loads(message)
 
-        # we pickle back to simulate sending a python object
-        message = pickle.dumps(message, PICKLE_VERSION)
-        socket_out.send(message)
+            # we pickle back to simulate sending a python object
+            message = pickle.dumps(message, PICKLE_VERSION)
+            socket_out.send(message)
 
-        size_messages += len(message)
+            size_messages += len(message)
 
-    print("Total size:", size_messages)
+        print("Total size:", size_messages)
+    finally:
+        socket_in.close()
+        socket_out.close()
 
 
 def wait_on_sender_receiver(sender, receiver, proc_method, *proc_args):
@@ -292,7 +295,7 @@ def zmq_test():
             socket_in.recv_pyobj()
 
     wait_on_sender_receiver(sender, receiver, zmq_worker)
-
+    context.destroy()
 
 def nano_test():
     print("Nano")
@@ -307,18 +310,24 @@ def nano_test():
         socket_out = nanomsg.Socket(nanomsg.PUSH)
         socket_out.bind(nano_socket_out)
 
-        for num in range(num_messages):
-            message = pickle.dumps(doc, PICKLE_VERSION)
-            socket_out.send(message)
+        try:
+            for num in range(num_messages):
+                message = pickle.dumps(doc, PICKLE_VERSION)
+                socket_out.send(message)
+        finally:
+            socket_out.close()
 
     @print_exc
     def receiver():
         socket_in = nanomsg.Socket(nanomsg.PULL)
         socket_in.bind(nano_socket_in)
 
-        for num in range(num_messages):
-            message = socket_in.recv()
-            message = pickle.loads(message)
+        try:
+            for num in range(num_messages):
+                message = socket_in.recv()
+                message = pickle.loads(message)
+        finally:
+            socket_in.close()
 
     wait_on_sender_receiver(sender, receiver, nano_worker)
 
@@ -379,15 +388,13 @@ def pipe_test():
 
 
 def main():
+    nano_test()
     # sysv_ipc_test()
     posix_ipc_test()
     queue_test()
-    joinable_queue_test()
+    # joinable_queue_test()  # slow
     pipe_test()
     zmq_test()
-
-    if ENABLE_NANO:
-        nano_test()
 
 if __name__ == "__main__":
     main()
